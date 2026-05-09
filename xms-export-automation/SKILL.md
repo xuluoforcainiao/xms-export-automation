@@ -29,7 +29,12 @@ This skill automates the full workflow of exporting abnormal items from the XMS 
 ### Phase 2: Export Data
 1. Click "异常件管理" in the left sidebar to expand submenu
 2. Click "自有业务异常件管理"
-3. **Critical**: Find the "上架组织" field. If it shows "客户服务部", left-click directly on the "客户服务部" text once to remove it. The field must be empty before querying.
+3. **Critical**: Clear the "上架组织" field. The field is a text input containing "客户服务部". Do NOT click on the "上架组织" label itself — it will only select the label text. Instead:
+   - Left-click **inside the input field**, on the right side of the "客户服务部" text (avoid the left-side label area)
+   - Press Ctrl+A to select all text in the input
+   - Press Delete to clear it
+   - The field should now show the placeholder "双击选择上架组织"
+   - If still not empty, retry up to 3 times. The field must be empty before querying.
 4. Click "查询"
 5. Wait for data to load, then click "导出原因（新）" in the top-right
 
@@ -115,7 +120,7 @@ This means the task fires at 09:00 and 17:00 every day. Phase 0 then filters whi
 
 - **Per-webhook scheduling**: Each webhook has its own `schedule.timeSlots` and `schedule.days`. The task only sends to webhooks whose schedule matches the current time
 - **Filename**: Must use the "创建时间" from the export record, never system time or hardcoded dates
-- **上架组织**: Must be empty before querying. Click on "客户服务部" text to remove it
+- **上架组织**: Must be empty before querying. Click inside the input field (right side of the text, avoiding the label), then Ctrl+A, then Delete to clear "客户服务部"
 - **DingTalk links**: Always use `https://alidocs.dingtalk.com/i/nodes/{nodeId}` format, never temporary OSS download links
 - **Keywords**: Every DingTalk robot message must contain that webhook's configured keyword or it will be rejected
 - **Folder ID**: `commit_uploaded_file` must include `folderId` to place files in the correct DingTalk folder
