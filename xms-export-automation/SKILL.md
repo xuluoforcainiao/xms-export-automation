@@ -1,99 +1,34 @@
 ---
 name: xms-export-automation
-description: Automates the XMS customer service abnormal item export workflow. Supports per-webhook scheduling so different DingTalk groups can receive exports at different frequencies. Covers SSO login, clearing the shelf organization filter, exporting abnormal items, polling the download center, uploading to a specified DingTalk document folder, and sending permanent links via DingTalk custom robots. Use when the user needs to export XMS abnormal items, set up scheduled XMS exports, configure per-group delivery schedules, or manage DingTalk delivery for XMS data.
+description: Automates the XMS customer service abnormal item export workflow. Covers SSO login, clearing the shelf organization filter, exporting abnormal items, polling the download center, downloading the result file, and optionally uploading to DingTalk. Use when the user needs to export XMS abnormal items, set up scheduled XMS exports, or manage XMS data delivery.
 ---
 
 # XMS 异常件导出自动化
 
 ## Overview
 
-This skill automates the full workflow of exporting abnormal items from the XMS customer service system and delivering them to DingTalk groups via permanent document links. Each DingTalk group (webhook) can have its own independent schedule.
+Automates the full workflow of exporting abnormal items from the XMS customer service system (`cs-packet.i4px.com`). The workflow includes browser health checks, SSO login, data export, polling for completion, file download, and optional DingTalk delivery.
 
-## Workflow Steps
+## Prerequisites
 
-### Phase 0: Check Which Webhooks Should Run
-1. Read `xms_export_config.json`
-2. Get current Beijing time and current day of week (0=Sunday, 1=Monday, ..., 6=Saturday)
-3. For each webhook:
-   - Check `enabled` is true
-   - Check `schedule.timeSlots` for a match with current hour/minute
-   - Check `schedule.days` contains current day of week
-4. Collect all matching webhooks. If none match, exit immediately without any action
-5. Only matching webhooks will receive messages in Phase 5
-
-### Phase 1: Login
-1. Navigate to `http://cs.packet.i4px.com/`
-2. If redirected to SSO (`sso.i4px.com`), log in with configured credentials
-3. Wait for redirect to `cs-packet.i4px.com/index`
-
-### Phase 2: Export Data
-1. Click "异常件管理" in the left sidebar to expand submenu
-2. Click "自有业务异常件管理"
-3. **Critical**: Clear the "上架组织" field. The field is a text input containing "客户服务部". Do NOT click on the "上架组织" label itself — it will only select the label text. Instead:
-   - Left-click **inside the input field**, on the right side of the "客户服务部" text (avoid the left-side label area)
-   - Press Ctrl+A to select all text in the input
-   - Press Delete to clear it
-   - The field should now show the placeholder "双击选择上架组织"
-   - If still not empty, retry up to 3 times. The field must be empty before querying.
-4. Click "查询"
-5. Wait for data to load, then click "导出原因（新）" in the top-right
-
-### Phase 3: Poll for Completion
-1. Click "下载中心" (or "导出记录") to open the export records dialog
-2. Check the progress column of the latest (first) record
-3. If not 100%, wait 2 minutes and refresh to recheck
-4. Repeat until 100% (max wait: 70 minutes)
-
-### Phase 4: Read Creation Time and Download
-1. Read the "创建时间" column text from the latest record (format: `2026-05-09 07:03:15`)
-2. Name the file: `xms异常件导出_{timestamp}.xlsx` (e.g., `xms异常件导出_2026-05-09 07:03:15.xlsx`)
-3. Click download and wait for completion
-4. Rename the downloaded file to match the creation timestamp
-
-### Phase 5: Upload to DingTalk and Send
-1. Call `get_file_upload_info` to get upload credentials
-2. Upload the xlsx file via HTTP PUT to the returned `resourceUrl`
-   - Set `Content-Type` header to empty string
-   - Include returned `Authorization` and `x-oss-date` headers
-3. Call `commit_uploaded_file` with:
-   - `folderId`: The target DingTalk folder ID (configured in settings)
-   - `name`: The creation-timestamp-based filename from Phase 4
-   - Record the returned `nodeId`
-4. Generate permanent link: `https://alidocs.dingtalk.com/i/nodes/{nodeId}`
-5. **Do NOT** use `download_file` — it returns temporary OSS links that expire in ~15 minutes
-6. Send messages **only to webhooks matched in Phase 0** via `send_message_by_custom_robot`
-   - Each message must include that webhook's configured keyword
-   - Include the permanent document link
-
-## Configuration File
-
-Read from `xms_export_config.json`:
+Create a configuration file `webhook_config.json` (managed by `xms_config_manager.py`):
 
 ```json
 {
   "xms": {
     "url": "http://cs.packet.i4px.com/",
-    "username": "...",
-    "password": "..."
+    "username": "YOUR_USERNAME",
+    "password": "YOUR_PASSWORD"
   },
   "webhooks": [
     {
-      "name": "Group A",
-      "token": "access_token_value",
-      "keyword": "required_keyword_in_message",
+      "name": "Group Name",
+      "token": "dingtalk_robot_token",
+      "keyword": "required_keyword",
+      "folderId": "https://alidocs.dingtalk.com/i/nodes/YOUR_FOLDER_ID",
       "enabled": true,
       "schedule": {
         "timeSlots": [{"hour": 9, "minute": 0}],
-        "days": [1, 2, 3, 4, 5]
-      }
-    },
-    {
-      "name": "Group B",
-      "token": "access_token_value",
-      "keyword": "required_keyword_in_message",
-      "enabled": true,
-      "schedule": {
-        "timeSlots": [{"hour": 17, "minute": 0}],
         "days": [1, 2, 3, 4, 5, 6, 0]
       }
     }
@@ -101,27 +36,133 @@ Read from `xms_export_config.json`:
   "export": {
     "poll_interval_seconds": 120,
     "max_wait_minutes": 70,
-    "file_name_template": "xms异常件导出_{timestamp}.xlsx"
+    "file_name_template": "xms异常件导出_{timestamp}.xlsx",
+    "max_retries": 3,
+    "retry_interval_seconds": 60,
+    "browser_max_recovery_attempts": 4,
+    "send_notification_on_failure": true
   }
 }
 ```
 
-### Cron Expression
+- `days`: 0=Sunday, 1=Monday, ..., 6=Saturday
+- `poll_interval_seconds`: Seconds between progress checks
+- `max_wait_minutes`: Max total wait time for export completion
+- `max_retries`: Max full-workflow retry attempts when any phase fails
+- `retry_interval_seconds`: Seconds to wait between retry attempts
+- `browser_max_recovery_attempts`: Max browser recovery strategies to try per attempt
+- `send_notification_on_failure`: Whether to send a DingTalk alert when all retries exhausted
 
-The QoderWork cron job should be the union of all webhook time slots:
+## Retry & Error Handling
 
-```
-0 9,17 * * *
-```
+The automation runs inside an outer retry loop:
 
-This means the task fires at 09:00 and 17:00 every day. Phase 0 then filters which webhooks actually match the current time.
+1. **Browser recovery first**: Each attempt begins with a 4-step browser health check (check size → JS resize → new tab → recreate window). If the browser MCP returns "Extension not connected" or `0x0`, the agent progressively escalates recovery strategies.
+2. **Phase-level retries**: If login, export trigger, polling, download, or DingTalk upload fails, the agent records the error, waits `retry_interval_seconds`, and restarts the entire workflow from browser recovery.
+3. **Failure notification**: If all `max_retries` are exhausted and `send_notification_on_failure` is true, the agent sends a DingTalk message to every matched webhook reporting the failure reason, so you are never left in the dark.
+
+## Workflow
+
+### Phase 0: Read Config & Filter Webhooks
+
+1. Read `webhook_config.json`
+2. Get current Beijing time (`Asia/Shanghai`) and day of week
+3. For each webhook where `enabled=true`, check if current time matches any `timeSlots` and current day is in `days`
+4. Collect matching webhooks. If none match and this is a scheduled run, exit silently
+
+### Phase 0.5: Browser Window Health Check
+
+Before any interaction, verify the browser window:
+
+1. **Check size**: `window.innerWidth + ',' + window.innerHeight`
+2. **JS resize**: If broken, `window.moveTo(0,0); window.resizeTo(1440,900)` then wait 2s and recheck
+3. **New tab**: Call `tabs_create_mcp`, check new tab size
+4. **Recreate window**: Close all tabs one by one (`tabs_close_mcp` only accepts a single `tabId` per call), then `tabs_context_mcp` with `createIfEmpty:true`
+5. **Small window fallback**: If persistently small (e.g., 256x116) but not `0,0`, DOM operations still work. Only terminate if literally `0,0` after all steps
+
+### Phase 1: Login
+
+1. Navigate to `http://cs.packet.i4px.com/`
+2. If redirected to `sso.i4px.com`, inject credentials via JavaScript:
+   ```javascript
+   document.getElementById('username').value = USERNAME;
+   document.getElementById('passwordOrg').value = PASSWORD;
+   ['input', 'change', 'keyup'].forEach(evt => {
+     document.getElementById('username').dispatchEvent(new Event(evt, {bubbles:true}));
+     document.getElementById('passwordOrg').dispatchEvent(new Event(evt, {bubbles:true}));
+   });
+   document.getElementById('signbtn').click();
+   ```
+3. **Handle "already logged in elsewhere" dialog**: If a dialog appears saying "此账号已在别的地方登录" or similar, click the "是"/"确定" button to continue
+4. **Handle QR code / device verification**: If after clicking login, a QR code scan, mobile device authentication popup, or slider captcha appears that the Agent cannot complete automatically:
+   - Do NOT retry repeatedly
+   - Immediately notify the user via IM (e.g., 小Q channel)
+   - Wait 3 minutes, then recheck if the page has redirected to XMS homepage
+   - If still not redirected after timeout, record error and exit to failure notification
+5. **Login timeout**: If the login page URL does not change within 3 minutes and no special scenario above occurs, record "XMS login timeout" and handle via retry logic
+6. Wait for redirect to `cs-packet.i4px.com/index`
+
+### Phase 2: Export Data
+
+1. Click **异常件管理** in left sidebar to expand submenu
+2. Click **自有业务异常件管理**
+3. **Clear the shelf organization field** (critical):
+   - The visible field is `id=txtUpShelfOgCodeShow` (default value: "客户服务部")
+   - The hidden field is `id=txtUpShelfOgCode` (default value: "D000414")
+   - Clear both via JavaScript: `.value = ''` then dispatch `input`/`change` events
+   - Alternative: left-click inside the input field on the right side of the text; the text should disappear automatically
+4. Click **查询** (`id=abnormalSearch`)
+5. Wait for data, then click **导出原因(新)** button (top-right)
+
+### Phase 3: Poll for Completion
+
+1. Click **下载中心** to open the export records dialog
+2. Read the drawer table. First data row shows: task name, file size, progress %, status, export time, download action
+3. If progress is not 100%, wait `poll_interval_seconds`, click **刷新**, and recheck
+4. Repeat until 100% or `max_wait_minutes` exceeded
+
+> **Modal reading tip**: `read_page` and `get_page_text` cannot see modal overlays. Use `computer` screenshot or JavaScript DOM queries on `.next-drawer` to read the export record table.
+
+### Phase 4: Download
+
+1. Read the **导出时间** from the first row (format: `2026-05-09 22:59:29`)
+2. Generate filename: `xms异常件导出_2026-05-09 22_59_29.xlsx` (replace colons with underscores for Windows compatibility)
+3. Click the **下载** button in the first row's action cell
+4. Find the downloaded file in `~/Downloads/` (filename starts with `xms-cts-`)
+5. Copy to output directory with the generated filename
+
+### Phase 5: DingTalk Delivery (Optional)
+
+For each matched webhook:
+
+1. Call `get_file_upload_info` for upload credentials
+2. Upload the xlsx via HTTP PUT to `resourceUrl`
+3. Call `commit_uploaded_file` with `folderId` and filename to get `nodeId`
+4. Generate permanent link: `https://alidocs.dingtalk.com/i/nodes/{nodeId}`
+5. Send message via `send_message_by_custom_robot` including the webhook's keyword and the permanent link
+
+## Verified Element References
+
+| Element | ID / Text | Notes |
+|---------|-----------|-------|
+| SSO username | `id=username` | Not `loginName` |
+| SSO password | `id=passwordOrg` | Not `loginPwd` |
+| SSO login button | `id=signbtn` | Not `loginBtn` |
+| Shelf org visible | `id=txtUpShelfOgCodeShow` | Default: "客户服务部" |
+| Shelf org hidden | `id=txtUpShelfOgCode` | Default: "D000414" |
+| Query button | `id=abnormalSearch` | |
+| Export reason button | text=`导出原因(新)` | |
+| Download center | text=`下载中心` | Opens drawer |
+| Refresh button | text=`刷新` | In drawer |
+| Drawer table | `.next-drawer table tr` | First data row = latest export |
 
 ## Critical Rules
 
-- **Per-webhook scheduling**: Each webhook has its own `schedule.timeSlots` and `schedule.days`. The task only sends to webhooks whose schedule matches the current time
-- **Filename**: Must use the "创建时间" from the export record, never system time or hardcoded dates
-- **上架组织**: Must be empty before querying. Click inside the input field (right side of the text, avoiding the label), then Ctrl+A, then Delete to clear "客户服务部"
-- **DingTalk links**: Always use `https://alidocs.dingtalk.com/i/nodes/{nodeId}` format, never temporary OSS download links
-- **Keywords**: Every DingTalk robot message must contain that webhook's configured keyword or it will be rejected
-- **Folder ID**: `commit_uploaded_file` must include `folderId` to place files in the correct DingTalk folder
-- **Model 配置（强制标准模型）**: 创建 QoderWork 定时任务时，`payload.model` 必须显式设置为 `"qwork-auto"`（标准模型）。禁止使用旗舰模型（`qwork-ultimate`），以避免不必要的 credit 消耗。如果用户未指定模型，默认强制使用 `qwork-auto`
+- **Model**: When creating the QoderWork cron job, set `payload.model` to `"qwork-auto"` (standard model). Do not use flagship model for production.
+- **Small window**: 256x116 is functional. DOM queries, `.click()`, and `.value` assignments work even in tiny windows. Only abort at `0,0`.
+- **tabs_close_mcp**: Only accepts a single integer `tabId` per call. Close tabs one by one.
+- **Filename**: Use the export record's "导出时间", not system time. Replace `:` with `_` for Windows filenames.
+- **DingTalk links**: Always use `https://alidocs.dingtalk.com/i/nodes/{nodeId}`, never temporary OSS links.
+- **Keywords**: Every robot message must contain that webhook's configured keyword.
+- **Robot token parameter**: Use `robotToken` (not `access_token`) when calling `send_message_by_custom_robot`.
+- **Upload Content-Type**: When uploading xlsx via HTTP PUT to `resourceUrl`, set `Content-Type` header to an empty string `""`, and include the returned `Authorization` and `x-oss-date` headers.
