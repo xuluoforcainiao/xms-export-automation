@@ -1,0 +1,30 @@
+{
+  "xms": {
+    "url": "http://cs.packet.i4px.com/",
+    "username": "YOUR_XMS_USERNAME",
+    "password": "YOUR_XMS_PASSWORD"
+  },
+  "webhooks": [
+    {
+      "name": "示例群",
+      "token": "YOUR_DINGTALK_ROBOT_TOKEN",
+      "keyword": "自有业务异常件",
+      "folderId": "https://alidocs.dingtalk.com/i/nodes/YOUR_FOLDER_ID",
+      "enabled": true,
+      "schedule": {
+        "timeSlots": [
+          {
+            "hour": 9,
+            "minute": 0
+          }
+        ],
+        "days": [1, 2, 3, 4, 5, 6, 0]
+      }
+    }
+  ],
+  "export": {
+    "poll_interval_seconds": 120,
+    "max_wait_minutes": 70,
+    "file_name_template": "xms异常件导出_{timestamp}.xlsx"
+  }
+}
