@@ -99,8 +99,15 @@ Before any interaction, verify the browser window:
    - Immediately notify the user via IM (e.g., 小Q channel)
    - Wait 3 minutes, then recheck if the page has redirected to XMS homepage
    - If still not redirected after timeout, record error and exit to failure notification
-5. **Login timeout**: If the login page URL does not change within 3 minutes and no special scenario above occurs, record "XMS login timeout" and handle via retry logic
-6. Wait for redirect to `cs-packet.i4px.com/index`
+5. **Handle "server exception" error**: If at any point the page displays "服务器异常" (or "系统异常"/"服务异常"):
+   - **Close the current tab** using `tabs_close_mcp`
+   - **Create a new tab** using `tabs_create_mcp`
+   - **Re-navigate** to `http://cs.packet.i4px.com/` in the new tab
+   - **Restart the login flow** from Phase 1 Step 1
+   - This counts toward the outer retry loop's `max_retries`
+   > Do NOT repeatedly interact with the error page. Always close and recreate the tab.
+6. **Login timeout**: If the login page URL does not change within 3 minutes and no special scenario above occurs, record "XMS login timeout" and handle via retry logic
+7. Wait for redirect to `cs-packet.i4px.com/index`
 
 ### Phase 2: Export Data
 
